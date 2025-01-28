@@ -1,19 +1,34 @@
 import os
 import shutil
+import argparse
 import kagglehub
 import cv2
 import numpy as np
 import pandas as pd
+import torch
+from ultralytics import YOLO
 
 
 class YOLOTraining:
     """
-    This class is for training a YOLO model 
+    This class is for training the YOLO model
     on the sshikamaru/car-object-detection dataset from Kaggle.
     """
 
     def __init__(self):
-        pass
+        self.args = self.parse_args()
+
+    def parse_args(self):
+        """
+        Parses the console arguments and takes parameters for training the YOLO model.
+        """
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--epochs", type=int, default=1)
+        parser.add_argument("--batch_size", type=int, default=16)
+        parser.add_argument("--img_size", type=int, default=640)
+        parser.add_argument("--model", type=str, default='yolo11n')
+        args = parser.parse_args()
+        return args
 
     def data_preparation(self):
         """
@@ -59,7 +74,32 @@ class YOLOTraining:
             f.write("nc: 1\n\n")
             f.write("names: ['car']\n")
 
+    def training(self):
+        """
+        Trains the YOLO model.
+        """
+        self.data_preparation()
+        dataset_yaml_path = os.path.join(os.getcwd(), "dataset_custom.yaml")
+        device = "0" if torch.cuda.is_available() else "cpu"
+
+        model = YOLO(f"{self.args.model}.pt")
+        model.train(
+            data=dataset_yaml_path,
+            epochs=self.args.epochs,
+            batch=self.args.batch_size,
+            imgsz=self.args.img_size,
+            device=device,
+            verbose=False,
+            seed=0
+        )
+
+        trained_model_dir = os.path.join(os.getcwd(), "models")
+        trained_model_path = os.path.join(
+            trained_model_dir, f"car_detection_{self.args.model}.pt")
+        os.makedirs(trained_model_dir, exist_ok=True)
+        model.save(trained_model_path)
+
 
 if __name__ == "__main__":
     yolo = YOLOTraining()
-    yolo.data_preparation()
+    yolo.training()
