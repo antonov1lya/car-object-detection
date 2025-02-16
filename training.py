@@ -3,10 +3,13 @@ import shutil
 import argparse
 import kagglehub
 import cv2
+import torch
+
 import numpy as np
 import pandas as pd
-import torch
 from ultralytics import YOLO
+
+from sklearn.model_selection import train_test_split
 
 
 class YOLOTraining:
@@ -34,19 +37,29 @@ class YOLOTraining:
         """
         Downloads and prepares the training dataset for the YOLA model.
         """
-        path = kagglehub.dataset_download("sshikamaru/car-object-detection")
-        train_data_path = \
-            f"{path}/data/training_images"
-        train_bboxes_csv_path = \
-            f"{path}/data/train_solution_bounding_boxes (1).csv"
+        path = kagglehub.dataset_download('sshikamaru/car-object-detection')
+        train_data_path = f'{path}/data/training_images'
+        train_bboxes_csv_path = f'{path}/data/train_solution_bounding_boxes (1).csv'
 
-        data_path = os.path.join(os.getcwd(), "data")
-        images_path = os.path.join(data_path, "images")
-        labels_path = os.path.join(data_path, "labels")
+        data_path = os.path.join(os.getcwd(), 'data')
+        images_path = os.path.join(data_path, 'images')
+        labels_path = os.path.join(data_path, 'labels')
         os.makedirs(images_path, exist_ok=True)
         os.makedirs(labels_path, exist_ok=True)
 
-        bboxes = pd.read_csv(train_bboxes_csv_path)
+        df = pd.read_csv(train_bboxes_csv_path)
+        train_ids, tmp_ids = train_test_split(
+            df.image.unique(), test_size=0.25, random_state=0)
+        train_df, tmp_df = df[df['image'].isin(
+            train_ids)], df[df['image'].isin(tmp_ids)]
+        val_ids, test_ids = train_test_split(
+            tmp_df.image.unique(), test_size=0.4, random_state=0)
+        val_df, test_df = tmp_df[tmp_df['image'].isin(
+            val_ids)], tmp_df[tmp_df['image'].isin(test_ids)]
+
+        for name in ['train', 'val', 'test']:
+            os.makedirs(os.path.join(images_path, name), exist_ok=True)
+            os.makedirs(os.path.join(labels_path, name), exist_ok=True)
 
         def convert_bbox_to_yolo_format(image_path, bbox):
             image = cv2.imread(image_path)
@@ -58,19 +71,32 @@ class YOLOTraining:
             box_h = (y_max - y_min) / h
             return (x_center, y_center, box_w, box_h)
 
-        for i in range(bboxes.shape[0]):
-            img_path, bbox = bboxes.loc[i, "image"], bboxes.iloc[i, 1:].values
-            full_img_path = os.path.join(train_data_path, img_path)
-            yolo_format_bbox = convert_bbox_to_yolo_format(full_img_path, bbox)
-            yolo_format_bbox = np.array(yolo_format_bbox).astype(str)
-            with open(os.path.join(labels_path, f"{img_path.replace('.jpg', '')}.txt"), "w+") as f:
-                f.write("0 " + " ".join(yolo_format_bbox) + "\n")
-            shutil.copy(full_img_path, os.path.join(images_path, img_path))
+        def load_images(df, df_name):
+            df.reset_index(drop=True, inplace=True)
+            for i in range(df.shape[0]):
+                img_path, bbox = df.loc[i, 'image'], df.iloc[i, 1:].values
+                with open(os.path.join(labels_path, df_name, f"{img_path.replace('.jpg', '')}.txt"), 'w') as f:
+                    f.write('')
+            for i in range(df.shape[0]):
+                img_path, bbox = df.loc[i, 'image'], df.iloc[i, 1:].values
+                full_img_path = os.path.join(train_data_path, img_path)
+                yolo_format_bbox = convert_bbox_to_yolo_format(
+                    full_img_path, bbox)
+                yolo_format_bbox = np.array(yolo_format_bbox).astype(str)
+                with open(os.path.join(labels_path, df_name, f"{img_path.replace('.jpg', '')}.txt"), 'a') as f:
+                    f.write('0 ' + ' '.join(yolo_format_bbox) + '\n')
+                shutil.copy(full_img_path, os.path.join(
+                    images_path, df_name, img_path))
+
+        load_images(train_df, 'train')
+        load_images(val_df, 'val')
+        load_images(test_df, 'test')
 
         with open(os.path.join(os.getcwd(), "dataset_custom.yaml"), "w") as f:
             f.write(f"path: {data_path}\n")
-            f.write("train: images\n")
-            f.write("val: images\n\n")
+            f.write("train: images/train\n")
+            f.write("val: images/val\n")
+            f.write("test: images/test\n\n")
             f.write("nc: 1\n\n")
             f.write("names: ['car']\n")
 
@@ -92,12 +118,6 @@ class YOLOTraining:
             verbose=False,
             seed=0
         )
-
-        trained_model_dir = os.path.join(os.getcwd(), "models")
-        trained_model_path = os.path.join(
-            trained_model_dir, f"car_detection_{self.args.model}.pt")
-        os.makedirs(trained_model_dir, exist_ok=True)
-        model.save(trained_model_path)
 
 
 if __name__ == "__main__":
